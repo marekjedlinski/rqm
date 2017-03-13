@@ -1,0 +1,325 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<!-- Random Quote Machine (a FreeCodeCamp project) by Marek Jedliński marek.jedlinski@gmail.com; http://q.tranglos.com
+   v1.0 / 2017-03-07
+	FEATURES:
+	- displays a random quote from database
+	- automatic data prefetch speeds up displaying new quotes on button click
+	- /?q=t limits quotes to only those within twitter length limit (140 chars)
+	        (This is sticky: clicking the "next" button will show a random twitter-sized quote.)
+	- /?q=123 navigates to a specific quote by its numeric id
+	        (This is non-sticky: clicking the "next" button will always show a random quote.)
+	- Twitter button behavior:
+	  * If quote is short enough, it is posted in its entirety.
+	  * If quote is too long for Twitter, it is truncated and posted with a link to the full quote
+	Stack: sqlite, php, html, css, JS, jquery, bootstrap (+ FontAwesome)
+-->
+<head>
+	<meta charset="UTF-8" />
+	<title>quoterr!</title>
+	<link href="http://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" rel="stylesheet">
+	<link rel="shortcut icon" href="favicon.ico" type="image/x-icon" />
+
+	<script src="https://use.fontawesome.com/551bdc4e9b.js"></script>
+
+	<style>
+
+		#quotearea {
+			font-size: 220%;
+			text-align: center;
+			min-height: 150px;
+			background-image: url("bg-stripes.png");
+			background-origin: border-box;
+			/*background-image: url("quote-transparent-red-alpha110.png");*/
+			/*background-repeat: no-repeat;*/
+		}
+
+		#author {
+			color: #6D6D6D;
+			font-weight: bold;
+			font-size: 90%;
+		}
+
+		#source {
+			font-weight: normal;
+			font-size: 70%;
+			font-style: italic;
+			color: #6D6D6D;
+		}
+
+		#selfurl a {
+			font-size: 90%;
+			color: #A20000;
+		}
+
+		.quotelink,
+		.quotelink:hover,
+		.quotelink:active,
+		.quotelink:focus,
+		.quotelink:visited {
+			color: #C30005;
+		}
+
+		.btn-quote:hover
+			   {
+			font-weight: bold;
+ 			color: white;
+		   background-color: #A20000;
+		   border-color: #A20000;
+		}
+
+		.btn-quote
+		, .btn-quote:focus
+		, .btn-quote:active
+		, .btn-quote:active:focus
+		, .btn-quote:visited  {
+			font-weight: bold;
+			color: white;
+		   background-color: #C30005;
+		   border-color: #C30005;
+		}
+
+		.btn-tweet:hover
+		, .btn-tweet:active {
+			font-weight: normal;
+			color: white;
+		   background-color: #C30005;
+		   border-color: #C30005;
+		}
+
+		.btn-tweet
+		, .btn-tweet:focus
+		, .btn-tweet:active:focus
+		, .btn-tweet:visited  {
+			font-weight: normal;
+ 			color: white;
+		   background-color: #A20000;
+		   border-color: #A20000;
+		}
+
+		.topspace {
+			margin-top: 5px;
+		}
+	</style>
+</head>
+
+<body>
+	<script src="http://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script>
+
+	<div class="container">
+
+		<div class="row center-block">
+			<div class="col-md-9 topspace">
+				<button id="btn-next" class="btn btn-quote btn-block center-block"><b>Another quote</b></button>
+			</div>
+			<div class="col-md-3 topspace">
+				<a id="tweet" class="btn btn-tweet btn-block" target="_blank" href="#" ><i class="fa fa-twitter fa-lg"></i> Tweet it!</a>
+			</div>
+		</div>
+
+		<div class="row center-block topspace"><div class="col-md-12">
+			<div class="well ">
+				<div id="quotearea">
+					<p class="quotetext" id="quote"></p>
+					<footer><span id="author"></span><br/><cite><span id="source"></span></cite></footer>
+				</div> <!-- quotearea -->
+			</div>
+		</div>
+
+		<div class="row center-block topspace">
+			<div class="col-md-12 topspace text-center">
+				<p id="selfurl" title="Permalink to this quote"></p>
+			</div>
+		</div>
+
+	</div> <!-- outer container -->
+
+	<script>
+	/* sequence of events:
+		fadeout -> show from cache -> fadein -> prefetch next */
+
+	var prefetched_quote = [];
+	var initial_user_request = '';
+	// var g_CurQuoteID = 0; // id of currently displayed quote
+
+	function updateTwitterBtn( quote, author, url ) {
+		const cTWITTER = 'https://twitter.com/intent/tweet/?text=';
+		const cMARGIN = 3;  // allow 3 chars for punctuation: " - "
+		const cTWEET = 140;
+		const cURLLEN = 24; // on twitter every URL counts as 23 chars, but we also add a space
+		var href = '';
+		var len = quote.length + author.length + cMARGIN;
+		if ( len <= cTWEET ) {
+			href = quote + ' - ' + author;
+			// IF there is enough space, append the URL
+			if (( href.length + cURLLEN ) <= cTWEET ) {
+				href += ' ' + url;
+			}
+		} else {
+			// truncate quote text to allow for URL
+			var maxQuoteLen = cTWEET - cMARGIN - cURLLEN - author.length - 1;
+			href = quote.substr( 0, maxQuoteLen ) + '… - ' + author + ' ' + url;
+		}
+		$("#tweet").attr( 'href', cTWITTER + href );
+
+	}
+
+	function clearDisplay() {
+		$(document).prop( 'title', 'quoterr' );
+	}
+
+	function clearDisplayAll() {
+		$("#quote").html( '' );
+		$("#author").html( '' );
+		$("#source").html( '' );
+		$("#link").html( '' );
+		$("#selfurl").html( '' );
+		$("#tweet").attr( 'href', '#' );
+		clearDisplay();
+	}
+
+	function displayQuoteText( quoteData ) {
+		clearDisplayAll;
+		$(document).prop('title', 'quoterr | ' + quoteData.author );
+
+		$("#quote").html( quoteData.text );
+
+		if ( quoteData.link === '' ) {
+			$("#author").html( '— ' + quoteData.author );
+		} else {
+			$("#author").html( '— ' + '<a class="quotelink" target="_top" href="' + quoteData.link + '">' + quoteData.author + '</a>' );
+		};
+		if ( quoteData.source !== '' ) {
+			$("#source").html( '(' + quoteData.source + ')' );
+		} else { $("#source").html('');}
+
+		$("#quotearea").fadeIn( 'fast' );
+		var thisQuoteURL = getQuoteURL( quoteData.id );
+		$("#selfurl").html( buildLink( thisQuoteURL ));
+
+		// for updateTwitterBtn we pass "#quote").text(),
+		// because quoteData.text may contain html tags such as <br>
+		updateTwitterBtn( $("#quote").text(), quoteData.author, thisQuoteURL );
+	}
+
+
+	function doSuccess( response ) {
+		if ( response.exitcode == 0 ) {
+			$("#quotearea").fadeOut( 'fast', function() { displayQuoteText( response.quote )});
+		} else {
+			doError( response.error );
+		}
+	}
+
+	function doError( errmsg ) {
+		clearDisplayAll(); // [x] unnecessary?
+		$("#quote").text( 'We have a malfunction.' );
+		$("#source").text( '(' + errmsg + ')' );
+		prefetched_quote = [];
+	}
+
+
+	function getQuote( isPrefetching ) {
+		$.ajax({
+			url: 'q.php',
+			dataType: 'json',
+			type: "GET",
+			data: getUserRequest(),
+			success: function( response ) {
+				if ( isPrefetching ) {
+					if ( response.exitcode == 0 ) {
+						prefetched_quote = response;
+					} else {
+						prefetched_quote = [];
+					}
+				} else {
+					doSuccess( response );
+					prefetchNextQuote();
+				}
+			},
+			error: function( jqXHR, statusmsg, errmsg ) {
+				// $("#quote").text( 'Oops! Code: ' + jqXHR.status + ' status: ' + statusmsg + ' msg: ' + errmsg );
+				prefetched_quote = [];
+				doError( statusmsg + ': ' + errmsg );
+			}
+		})
+	}
+
+	function prefetchNextQuote() {
+		getQuote( true );
+	}
+
+	function showQuote() {
+		clearDisplay();
+		if ( prefetched_quote.quote === undefined ) {
+			getQuote( false );
+		} else {
+			doSuccess( prefetched_quote );
+			prefetched_quote = [];
+			prefetchNextQuote();
+		}
+	}
+
+	function getUrlVars() {
+	    // https://gist.github.com/kaioe/8401201
+	    var vars = [], hash;
+	    var hashes = window.location.href.slice(window.location.href.indexOf('?') + 1).split('&');
+	    for(var i = 0; i < hashes.length; i++)
+	    {
+	        hash = hashes[i].split('=');
+	        vars.push(hash[0]);
+	        vars[hash[0]] = hash[1];
+	    }
+	    return vars;
+	}
+
+	function checkUserRequest() {
+		var params = getUrlVars();
+		if ( params.hasOwnProperty( 'q' ) && ( params['q'] != undefined )) {
+			initial_user_request = params['q'];
+		}
+	}
+
+	function getUserRequest() {
+		result = {};
+		if ( initial_user_request !== '' ) {
+			result['q'] = initial_user_request;
+			if ( initial_user_request != 't' ) {
+				// reset it, so that we don't always get the same quote,
+				// but if user said /?q=t, then keep showing twitter-sized quotes
+				initial_user_request = '';
+			}
+		}
+		return result;
+	}
+
+
+	function getQuoteURL( quoteID ) {
+		if ( quoteID !== 0 ) {
+			return window.location.protocol + '//' + window.location.hostname + window.location.pathname + '?q=' + quoteID;
+		} else {
+			return '';
+		}
+	}
+
+	function buildLink( url ) {
+		return '<a href="' + url + '" target="_blank">' + url + '</a>';
+	}
+
+
+	$(document).ready(function() {
+		var prefetched_quote = [];
+		// when loading original document, see if user makes a special request
+		checkUserRequest();
+   	showQuote();
+ 	});
+
+ 	$("#btn-next").on("click", function(){
+ 		showQuote();
+ 	});
+
+	</script>
+
+</body>
+</html>
+
